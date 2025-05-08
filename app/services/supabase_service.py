@@ -129,12 +129,30 @@ def get_scan_by_id(scan_id: str) -> Dict[str, Any]:
         result = supabase.table("scan_history") \
             .select("*") \
             .eq("id", scan_id) \
-            .single() \
             .execute()
-        return result.data
+            
+        if not result.data or len(result.data) == 0:
+            return None
+            
+        return result.data[0]
     except Exception as e:
         logger.error(f"Error retrieving scan: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error retrieving scan: {str(e)}"
-        ) 
+        )
+
+async def delete_scan(scan_id: str) -> None:
+    """Delete a scan record from Supabase."""
+    try:
+        # Delete the scan record
+        response = supabase.table("scan_history").delete().eq("id", scan_id).execute()
+        
+        # Check if any records were deleted
+        if not response.data or len(response.data) == 0:
+            raise Exception(f"No scan found with ID: {scan_id}")
+            
+        logger.info(f"Successfully deleted scan {scan_id}")
+    except Exception as e:
+        logger.error(f"Error deleting scan from Supabase: {str(e)}")
+        raise 
