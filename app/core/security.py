@@ -22,7 +22,8 @@ def calculate_security_score(vulnerabilities: List[Dict]) -> int:
         
         # Deduct points based on severity
         for vuln in vulnerabilities:
-            severity = vuln.get("severity", "INFO").upper()
+            # Get severity from the extra field where Semgrep stores it
+            severity = vuln.get('extra', {}).get('severity', 'INFO').upper()
             deduction = point_deductions.get(severity, 0.4)  # Default to INFO deduction if unknown
             base_score -= deduction
             
@@ -42,8 +43,11 @@ def count_severities(vulnerabilities: List[Dict]) -> Dict[str, int]:
     try:
         severities = {"ERROR": 0, "WARNING": 0, "INFO": 0}
         for vuln in vulnerabilities:
-            sev = vuln.get('severity', 'INFO').upper()
-            severities[sev] = severities.get(sev, 0) + 1
+            # Get severity from the extra field where Semgrep stores it
+            sev = vuln.get('extra', {}).get('severity', 'INFO').upper()
+            # Only count if it's one of our expected severities
+            if sev in severities:
+                severities[sev] += 1
         return severities
     except Exception as e:
         logger.error(f"Error counting severities: {str(e)}")

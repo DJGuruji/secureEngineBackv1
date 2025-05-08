@@ -1,10 +1,10 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, status
+from fastapi import APIRouter, UploadFile, File, HTTPException, status, Form
 import os
 import tempfile
 import shutil
 import logging
 import time
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 from app.services.semgrep_service import run_semgrep
 from app.services.supabase_service import store_scan_results, get_scan_history, get_scan_by_id
 from app.core.security import calculate_security_score, count_severities
@@ -15,50 +15,45 @@ settings = get_settings()
 
 router = APIRouter()
 
-def process_upload(file: UploadFile) -> Dict[str, Any]:
+def process_upload(file: UploadFile, custom_rule: Optional[str] = None) -> Dict[str, Any]:
     """Process the uploaded file and return vulnerability results."""
     try:
         logger.info(f"Processing file: {file.filename}")
         start_time = time.time()
         
         with tempfile.TemporaryDirectory() as temp_dir:
+            # Save uploaded file to temp directory
             file_path = os.path.join(temp_dir, file.filename)
-            
             with open(file_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
             
-            if file.filename.endswith('.zip'):
-                logger.info("Extracting zip file")
-                shutil.unpack_archive(file_path, temp_dir)
-                vulnerabilities = run_semgrep(temp_dir)
-            elif file.filename.endswith('.exe'):
-                logger.info("EXE file uploaded. Skipping static analysis.")
-                vulnerabilities = []
-            elif file.filename.endswith('.txt'):
-                vulnerabilities = run_semgrep(file_path)
-            else:
-                vulnerabilities = run_semgrep(file_path)
-
-            # Ensure top-level severity field for each vulnerability
-            for vuln in vulnerabilities:
-                vuln['severity'] = vuln.get('extra', {}).get('severity', 'info')
-
-            # Calculate metrics
+            # Run semgrep scan
+            vulnerabilities = run_semgrep(file_path, custom_rule)
+            
+            # Calculate security score and severity counts
+            security_score = calculate_security_score(vulnerabilities)
             severity_count = count_severities(vulnerabilities)
             total_vulnerabilities = len(vulnerabilities)
-            security_score = calculate_security_score(vulnerabilities)
             
-            scan_duration = time.time() - start_time
-            
-            return {
+            # Prepare scan results
+            scan_results = {
+                "file_name": file.filename,
+                "security_score": security_score,
                 "vulnerabilities": vulnerabilities,
                 "severity_count": severity_count,
                 "total_vulnerabilities": total_vulnerabilities,
-                "security_score": security_score,
-                "scan_duration": scan_duration,
-                "tool_version": "semgrep-latest",
-                "environment": os.getenv("ENVIRONMENT", "development")
+                "scan_timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "scan_duration": time.time() - start_time,
+                "scan_metadata": {
+                    "scan_type": "SAST",
+                    "scan_mode": "custom" if custom_rule else "auto"
+                }
             }
+            
+            # Store results in database
+            store_scan_results(scan_results)
+            
+            return scan_results
             
     except Exception as e:
         logger.error(f"Error processing file: {str(e)}")
@@ -68,30 +63,15 @@ def process_upload(file: UploadFile) -> Dict[str, Any]:
         )
 
 @router.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
-    """Handle file upload, run SAST scan, and store results in Supabase."""
+async def upload_file(
+    file: UploadFile = File(...),
+    custom_rule: Optional[str] = Form(None)
+):
+    """Upload a file for scanning."""
     try:
-        logger.info(f"Starting upload process for file: {file.filename}")
-        
-        # Process file and get scan results
-        scan_results = process_upload(file)
-        
-        # Prepare data for Supabase
-        data = {
-            "file_name": file.filename,
-            **scan_results
-        }
-        
-        # Store results in Supabase
-        stored_result = store_scan_results(data)
-        
-        return {
-            **scan_results,
-            "scan_id": stored_result["id"]
-        }
-        
+        return process_upload(file, custom_rule)
     except Exception as e:
-        logger.error(f"Error in upload_file: {str(e)}")
+        logger.error(f"Error uploading file: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)

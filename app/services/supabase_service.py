@@ -18,7 +18,11 @@ except Exception as e:
 
 def enhance_vulnerability_data(vulnerability: Dict[str, Any]) -> Dict[str, Any]:
     """Enhance vulnerability data with risk severity and exploitability context."""
+    # Get severity from Semgrep results
     severity = vulnerability.get("extra", {}).get("severity", "INFO")
+    
+    # Normalize severity to uppercase
+    severity = severity.upper()
     
     # Risk severity calculation based on multiple factors
     risk_factors = {
@@ -39,7 +43,13 @@ def enhance_vulnerability_data(vulnerability: Dict[str, Any]) -> Dict[str, Any]:
         }
     }
     
+    # Get risk context, default to INFO if severity not found
     risk_context = risk_factors.get(severity, risk_factors["INFO"])
+    
+    # Ensure the severity is properly set in the vulnerability data
+    if "extra" not in vulnerability:
+        vulnerability["extra"] = {}
+    vulnerability["extra"]["severity"] = severity
     
     return {
         **vulnerability,
@@ -63,18 +73,17 @@ def store_scan_results(data: Dict[str, Any]) -> Dict[str, Any]:
         # Prepare scan history data
         scan_data = {
             "file_name": data["file_name"],
-            "scan_timestamp": datetime.utcnow().isoformat(),
+            "scan_timestamp": data.get("scan_timestamp", datetime.utcnow().isoformat()),
             "vulnerabilities": enhanced_vulnerabilities,
             "severity_count": data["severity_count"],
             "total_vulnerabilities": data["total_vulnerabilities"],
             "security_score": data["security_score"],
             "scan_status": "completed",
             "scan_duration": data.get("scan_duration", 0),
-            "scan_metadata": {
-                "tool_version": data.get("tool_version", "unknown"),
+            "scan_metadata": data.get("scan_metadata", {
                 "scan_type": "SAST",
-                "environment": data.get("environment", "development")
-            }
+                "scan_mode": "auto"
+            })
         }
         
         # Store in scan_history table
